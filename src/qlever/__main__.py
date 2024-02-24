@@ -172,7 +172,8 @@ class Actions:
                 "use_patterns": "true",
                 "url": f"http://localhost:{self.config['server']['port']}",
             },
-            "docker": {
+            "container": {
+                "runtime": "docker",
                 "image": "adfreiburg/qlever",
                 "container_server": f"qlever.server.{self.name}",
                 "container_indexer": f"qlever.indexer.{self.name}",
@@ -185,6 +186,22 @@ class Actions:
 
             }
         }
+
+        docker_options = ["image", "container_server", "container_indexer"]
+        if self.config.has_section("docker"):
+            log.warning("The docker section in the configuration is deprecated. "
+                        "Use container instead and set `RUNTIME=docker`. "
+                        "The config options themselves are identical.")
+            for option in docker_options:
+                if self.config["docker"].get(option):
+                    self.config["container"][option] = self.config["docker"].get(option)
+            if self.config["docker"].get("use_docker"):
+                self.config["container"]["use_container"] = self.config["docker"].get("use_docker")
+        if self.config.has_section("container"):
+            runtime = self.config["container"]["runtime"]
+            if (runtime != "docker") and (runtime != "podman"):
+                log.error(f"Unsupported container runtime {runtime}. Supported: `docker`, `podman`")
+
         for section in defaults:
             # If the section does not exist, create it.
             if not self.config.has_section(section):
@@ -228,19 +245,19 @@ class Actions:
                       f" will not scan network connections for action"
                       f" \"start\"")
 
-        # Check whether docker is installed and works (on MacOS 12, docker
+        # Check whether the container runtime is installed and works (on MacOS 12, docker
         # hangs when installed without GUI, hence the timeout).
         try:
             completed_process = subprocess.run(
-                    ["docker", "info"], timeout=0.5,
+                    [self.config["container"]["runtime"], "info"], timeout=0.5,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if completed_process.returncode != 0:
-                raise Exception("docker info failed")
-            self.docker_enabled = True
+                raise Exception(f"{self.config['container']['runtime']} info failed")
+            self.container_enabled = True
         except Exception:
-            self.docker_enabled = False
-            print("Note: `docker info` failed, therefore"
-                  " docker.USE_DOCKER=true not supported")
+            self.container_enabled = False
+            print(f"Note: `{self.config['container']['runtime']} info` failed, therefore"
+                  " container.USE_CONTAINER=true not supported")
 
     def set_config(self, section, option, value):
         """
@@ -457,14 +474,15 @@ class Actions:
 
         # If we are using Docker, run the command in a Docker container.
         # Here is how the shell script does it:
-        if self.config['docker']['use_docker'] in self.yes_values:
-            docker_config = self.config['docker']
-            cmdline = (f"docker run -it --rm -u $(id -u):$(id -g)"
+        if self.config['container']['use_container'] in self.yes_values:
+            container_config = self.config['container']
+            user_option = "-u $(id -u):$(id -g)" if container_config["runtime"] == "docker" else "-u root"
+            cmdline = (f"{container_config['runtime']} run -it --rm {user_option}"
                        f" -v /etc/localtime:/etc/localtime:ro"
                        f" -v $(pwd):/index -w /index"
                        f" --entrypoint bash"
-                       f" --name {docker_config['container_indexer']}"
-                       f" {docker_config['image']}"
+                       f" --name {container_config['container_indexer']}"
+                       f" {container_config['image']}"
                        f" -c {shlex.quote(cmdline)}")
 
         # Show the command line.
@@ -474,9 +492,9 @@ class Actions:
         if only_show:
             return
 
-        # When docker.USE_DOCKER=false, check if the binary for building the
+        # When container.USE_CONTAINER=false, check if the binary for building the
         # index exists and works.
-        if self.config['docker']['use_docker'] not in self.yes_values:
+        if self.config['container']['use_container'] not in self.yes_values:
             try:
                 check_binary_cmd = f"{self.config['index']['binary']} --help"
                 subprocess.run(check_binary_cmd, shell=True, check=True,
@@ -485,7 +503,7 @@ class Actions:
             except subprocess.CalledProcessError as e:
                 log.error(f"Running \"{check_binary_cmd}\" failed ({e}), "
                           f"set index.BINARY to a different binary or "
-                          f"set docker.USE_DOCKER=true")
+                          f"set container.USE_CONTAINER=true")
                 abort_script()
 
         # Check if index files (name.index.*) already exist.
@@ -568,18 +586,19 @@ class Actions:
             cmdline += " -t"
         cmdline += f" > {self.name}.server-log.txt 2>&1"
 
-        # If we are using Docker, run the command in a docker container.
-        if self.config['docker']['use_docker'] in self.yes_values:
-            docker_config = self.config['docker']
-            cmdline = (f"docker run -d --restart=unless-stopped"
-                       f" -u $(id -u):$(id -g)"
+        # If we are using containers, run the command in a container.
+        if self.config['container']['use_container'] in self.yes_values:
+            container_config = self.config['container']
+            user_option = "-u $(id -u):$(id -g)" if container_config["runtime"] == "docker" else "-u root"
+            cmdline = (f"{container_config['runtime']} run -d --restart=unless-stopped"
+                       f" {user_option}"
                        f" -it -v /etc/localtime:/etc/localtime:ro"
                        f" -v $(pwd):/index"
                        f" -p {server_config['port']}:{server_config['port']}"
                        f" -w /index"
                        f" --entrypoint bash"
-                       f" --name {docker_config['container_server']}"
-                       f" {docker_config['image']}"
+                       f" --name {container_config['container_server']}"
+                       f" {container_config['image']}"
                        f" -c {shlex.quote(cmdline)}")
         else:
             cmdline = f"nohup {cmdline} &"
@@ -589,9 +608,9 @@ class Actions:
         if only_show:
             return
 
-        # When docker.USE_DOCKER=false, check if the binary for starting the
+        # When container.USE_CONTAINER=false, check if the binary for starting the
         # server exists and works.
-        if self.config['docker']['use_docker'] not in self.yes_values:
+        if self.config['container']['use_container'] not in self.yes_values:
             try:
                 check_binary_cmd = f"{self.config['server']['binary']} --help"
                 subprocess.run(check_binary_cmd, shell=True, check=True,
@@ -600,7 +619,7 @@ class Actions:
             except subprocess.CalledProcessError as e:
                 log.error(f"Running \"{check_binary_cmd}\" failed ({e}), "
                           f"set server.BINARY to a different binary or "
-                          f"set docker.USE_DOCKER=true")
+                          f"set container.USE_CONTAINER=true")
                 abort_script()
 
         # Check if a QLever server is already running on this port.
@@ -662,28 +681,28 @@ class Actions:
         """
 
         # Show action description.
-        docker_container_name = self.config['docker']['container_server']
+        container_name = self.config['container']['container_server']
         cmdline_regex = (f"ServerMain.* -i [^ ]*{self.name}")
         self.show(f"Checking for process matching \"{cmdline_regex}\" "
                   f"and for Docker container with name "
-                  f"\"{docker_container_name}\"", only_show)
+                  f"\"{container_name}\"", only_show)
         if only_show:
             return
 
-        # First check if there is docker container running.
-        if self.docker_enabled:
-            docker_cmd = (f"docker stop {docker_container_name} && "
-                          f"docker rm {docker_container_name}")
+        # First check if there is a container running.
+        if self.container_enabled:
+            container_cmd = (f"{self.config['container']['runtime']} stop {container_name} && "
+                             f"{self.config['container']['runtime']} rm {container_name}")
             try:
-                subprocess.run(docker_cmd, shell=True, check=True,
+                subprocess.run(container_cmd, shell=True, check=True,
                                stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL)
-                log.info(f"Docker container with name "
-                         f"\"{docker_container_name}\" "
+                log.info(f"Container with name "
+                         f"\"{container_name}\" "
                          f"stopped and removed")
                 return
             except Exception as e:
-                log.debug(f"Error running \"{docker_cmd}\": {e}")
+                log.debug(f"Error running \"{container_cmd}\": {e}")
 
         # Check if there is a process running on the server port using psutil.
         #
@@ -757,7 +776,7 @@ class Actions:
         """
         Action that shows all QLever processes running on this machine.
 
-        TODO: Also show the QLever-related docker containers.
+        TODO: Also show the QLever-related containers.
         """
 
         # Show action description.
@@ -951,32 +970,32 @@ class Actions:
         # Construct commands.
         host_name = socket.getfqdn()
         server_url = f"http://{host_name}:{self.config['server']['port']}"
-        docker_rm_cmd = f"docker rm -f {self.config['ui']['container']}"
-        docker_pull_cmd = f"docker pull {self.config['ui']['image']}"
-        docker_run_cmd = (f"docker run -d -p {self.config['ui']['port']}:7000 "
+        rm_cmd = f"{self.config['container']['runtime']} rm -f {self.config['ui']['container']}"
+        pull_cmd = f"{self.config['container']['runtime']} pull {self.config['ui']['image']}"
+        run_cmd = (f"{self.config['container']['runtime']} run -d -p {self.config['ui']['port']}:7000 "
                           f"--name {self.config['ui']['container']} "
                           f"{self.config['ui']['image']} ")
-        docker_exec_cmd = (f"docker exec -it "
+        exec_cmd = (f"{self.config['container']['runtime']} exec -it "
                            f"{self.config['ui']['container']} "
                            f"bash -c \"python manage.py configure "
                            f"{self.config['ui']['config']} "
                            f"{server_url}\"")
 
         # Show them.
-        self.show("\n".join([docker_rm_cmd, docker_pull_cmd, docker_run_cmd,
-                             docker_exec_cmd]), only_show)
+        self.show("\n".join([rm_cmd, pull_cmd, run_cmd,
+                             exec_cmd]), only_show)
         if only_show:
             return
 
         # Execute them.
         try:
-            subprocess.run(docker_rm_cmd, shell=True,
+            subprocess.run(rm_cmd, shell=True,
                            stdout=subprocess.DEVNULL)
-            subprocess.run(docker_pull_cmd, shell=True,
+            subprocess.run(pull_cmd, shell=True,
                            stdout=subprocess.DEVNULL)
-            subprocess.run(docker_run_cmd, shell=True,
+            subprocess.run(run_cmd, shell=True,
                            stdout=subprocess.DEVNULL)
-            subprocess.run(docker_exec_cmd, shell=True,
+            subprocess.run(exec_cmd, shell=True,
                            stdout=subprocess.DEVNULL)
         except subprocess.CalledProcessError as e:
             raise ActionException(f"Failed to start the QLever UI {e}")
@@ -1321,7 +1340,7 @@ def setup_autocompletion_cmd():
     action_names = " ".join(action_names)
 
     # Add config settings to the list of possible actions for autocompletion.
-    action_names += " docker.USE_DOCKER=true docker.USE_DOCKER=false"
+    action_names += " container.USE_CONTAINER=true container.USE_CONTAINER=false"
     action_names += " index.BINARY=IndexBuilderMain"
     action_names += " server.BINARY=ServerMain"
 
