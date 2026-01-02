@@ -1,0 +1,33 @@
+Source: qlever-control
+Section: python
+Priority: optional
+Maintainer: Julian Mundhahs <mundhahj@tf.uni-freiburg.de>
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-python,
+ python3-all,
+ python3-build,
+ python3-setuptools,
+ pybuild-plugin-pyproject,
+ # Test
+ python3-rdflib,
+ python3-psutil,
+ python3-termcolor,
+ python3-pytest,
+ python3-argcomplete,
+ # Bash completions
+ bash-completion,
+Standards-Version: 4.7.2
+Homepage: https://github.com/qlever-dev/qlever-control
+Vcs-Git: https://github.com/qlever-dev/qlever-control.git
+Vcs-Browser: https://github.com/qlever-dev/qlever-control
+Rules-Requires-Root: no
+Testsuite: autopkgtest-pkg-python
+Testsuite-Triggers: python3-pytest
+
+Package: qlever-control
+Architecture: all
+Depends: ${python3:Depends}, ${misc:Depends}
+Description: A wrapper script for QLever
+  A wrapper script for QLever for easier usage and integration of further tools.
+

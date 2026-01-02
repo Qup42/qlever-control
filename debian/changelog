@@ -1,0 +1,11 @@
+qlever-control (0.5.36-2) unstable; urgency=medium
+
+  * Add completions for bash.
+
+ -- Julian Mundhahs <mundhahj@tf.uni-freiburg.de>  Tue, 23 Dec 2025 22:29:45 +0000
+
+qlever-control (0.5.36-1) unstable; urgency=medium
+
+  * Initial release
+
+ -- Julian Mundhahs <mundhahj@tf.uni-freiburg.de>  Tue, 23 Dec 2025 09:23:52 +0000

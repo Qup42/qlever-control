@@ -1,0 +1,11 @@
+# A container that can be used to package qlever-control for debian/ubuntu.
+FROM debian:trixie-slim
+LABEL org.opencontainers.image.authors="Julian Mundhahs <mundhahj@tf.uni-freiburg.de>"
+
+RUN apt update && apt upgrade -y
+# general packages for building python packages
+RUN apt install -y python3 dpkg debhelper-compat dh-python python3-all python3-build python3-setuptools pybuild-plugin-pyproject
+# dependencies of qlever-control, required for tests
+RUN apt install -y python3-argcomplete python3-psutil python3-rdflib python3-termcolor python3-tqdm python3-yaml python3-pytest
+# debug tools and helpers
+RUN apt install -y vim devscripts python3-poetry-core
