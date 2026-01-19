@@ -1168,6 +1168,7 @@ class UpdateWikidataCommand(QleverCommand):
             time_snapshot = get_time_ms(
                 result,
                 "snapshotCreation",
+                "total",
             )
             time_writeback = get_time_ms(
                 result,
