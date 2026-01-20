@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 
 from qlever.command import QleverCommand
@@ -47,12 +48,33 @@ class VacuumDeltaTriplesCommand(QleverCommand):
             match = re.match(r"^(.*) (\d+)$", result, re.DOTALL)
             if not match:
                 raise Exception(f"Unexpected output:\n{result}")
-            error_message = match.group(1).strip()
+            body = match.group(1).strip()
             status_code = match.group(2)
             if status_code != "200":
-                raise Exception(error_message)
-            message = "Delta triples vacuumed successfully"
-            log.info(message)
+                raise Exception(body)
+
+            # Parse and display JSON response
+            try:
+                response = json.loads(body)
+                log.info("Delta triples vacuumed successfully")
+                log.info("")
+
+                # Iterate through each permutation
+                for perm_name, perm_stats in response.items():
+                    log.info(f"Permutation {perm_name}:")
+                    log.info(f"  Deletions kept    : {perm_stats.get('deletionsKept', 0):,}")
+                    log.info(f"  Deletions removed : {perm_stats.get('deletionsRemoved', 0):,}")
+                    log.info(f"  Insertions kept   : {perm_stats.get('insertionsKept', 0):,}")
+                    log.info(f"  Insertions removed: {perm_stats.get('insertionsRemoved', 0):,}")
+                    log.info(f"  Total kept        : {perm_stats.get('totalKept', 0):,}")
+                    log.info(f"  Total removed     : {perm_stats.get('totalRemoved', 0):,}")
+                    log.info("")  # Blank line between permutations
+
+            except json.JSONDecodeError as e:
+                log.error(f"Failed to parse JSON response: {e}")
+                log.info(f"Raw response: {body}")
+                return False
+
             return True
         except Exception as e:
             log.error(e)
