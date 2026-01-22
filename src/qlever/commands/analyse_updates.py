@@ -84,7 +84,7 @@ class AnalyseUpdatesCommand(QleverCommand):
             percentiles = [10, 25, 50, 75, 90, 95, 99, 99.9, 99.99]
             row_labels = ["count", "sum", "avg", "median"] + \
                          [f"p{p}" for p in percentiles] + \
-                         ["#1", "#5", "#25", "#100"]
+                         [f"#{i}" for i in range(1, 26)] + ["#50", "#75", "#100"]
             all_stats: dict[str, dict[str, float | str]] = {}
 
             for field, data in parsed.items():
@@ -119,7 +119,7 @@ class AnalyseUpdatesCommand(QleverCommand):
                 for p in percentiles:
                     field_stats[f"p{p}"] = pct_results[p]
                 # Store both value and block index for top_n entries
-                for top_n in [1, 5, 25, 100]:
+                for top_n in list(range(1, 26)) + [50, 75, 100]:
                     idx = min(top_n, len(values))
                     field_stats[f"#{top_n}"] = float(values[-idx])
                     field_stats[f"#{top_n}_block"] = str(block_indices[-idx])
@@ -148,7 +148,7 @@ class AnalyseUpdatesCommand(QleverCommand):
                     log.info(f"p{p:<3}: {formatted_pcts[p].rjust(max_width)}")
 
                 # Show top N largest entries with their block indices
-                for top_n in [1, 5, 25, 100]:
+                for top_n in list(range(1, 26)) + [50, 75, 100]:
                     idx = min(top_n, len(values))
                     formatted_top = _fmt_int(values[-idx])
                     block_id = block_indices[-idx]
@@ -173,7 +173,7 @@ class AnalyseUpdatesCommand(QleverCommand):
                         for field in fields:
                             row.append(all_stats[field].get(stat_name, ""))
                             # Add block index if this is a top_n stat
-                            if stat_name in ["#1", "#5", "#25", "#100"]:
+                            if stat_name.startswith("#"):
                                 row.append(all_stats[field].get(f"{stat_name}_block", ""))
                             else:
                                 row.append("")  # Empty for non-top_n stats
