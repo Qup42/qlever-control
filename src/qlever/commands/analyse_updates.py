@@ -85,16 +85,21 @@ class AnalyseUpdatesCommand(QleverCommand):
             row_labels = ["count", "sum", "avg", "median"] + \
                          [f"p{p}" for p in percentiles] + \
                          ["#1", "#5", "#25", "#100"]
-            all_stats: dict[str, dict[str, float]] = {}
+            all_stats: dict[str, dict[str, float | str]] = {}
 
             for field, data in parsed.items():
+                # Extract block indices and values as parallel arrays
+                block_indices = np.array(list(data.keys()), dtype=str)
                 values = np.array([int(num_changes) for num_changes in data.values()], dtype=int)
 
                 if values.size == 0:
                     log.info(f"'{field}' field is present but empty; nothing to analyze.")
                     continue
 
-                values.sort()
+                # Sort both arrays together to maintain association
+                sort_indices = np.argsort(values)
+                values = values[sort_indices]
+                block_indices = block_indices[sort_indices]
                 n = int(values.size)
                 avg = float(np.mean(values))
                 pct_vals = np.percentile(values, percentiles)
@@ -105,7 +110,7 @@ class AnalyseUpdatesCommand(QleverCommand):
                 sum_val = float(np.sum(values))
 
                 # Collect stats for CSV
-                field_stats: dict[str, float] = {
+                field_stats: dict[str, float | str] = {
                     "count": n,
                     "sum": sum_val,
                     "avg": avg,
@@ -113,10 +118,11 @@ class AnalyseUpdatesCommand(QleverCommand):
                 }
                 for p in percentiles:
                     field_stats[f"p{p}"] = pct_results[p]
-                field_stats["#1"] = float(values[-1])
-                field_stats["#5"] = float(values[-5]) if len(values) >= 5 else float(values[0])
-                field_stats["#25"] = float(values[-25]) if len(values) >= 25 else float(values[0])
-                field_stats["#100"] = float(values[-100]) if len(values) >= 100 else float(values[0])
+                # Store both value and block index for top_n entries
+                for top_n in [1, 5, 25, 100]:
+                    idx = min(top_n, len(values))
+                    field_stats[f"#{top_n}"] = float(values[-idx])
+                    field_stats[f"#{top_n}_block"] = str(block_indices[-idx])
                 all_stats[field] = field_stats
 
                 formatted_count = _fmt_int(n)
@@ -141,10 +147,12 @@ class AnalyseUpdatesCommand(QleverCommand):
                 for p in percentiles:
                     log.info(f"p{p:<3}: {formatted_pcts[p].rjust(max_width)}")
 
-                # Show top 3 largest entries (handle if fewer than 3 exist).
+                # Show top N largest entries with their block indices
                 for top_n in [1, 5, 25, 100]:
-                    formatted_top = _fmt_int(values[-top_n])
-                    log.info(f"#{top_n}: {formatted_top.rjust(max_width)}")
+                    idx = min(top_n, len(values))
+                    formatted_top = _fmt_int(values[-idx])
+                    block_id = block_indices[-idx]
+                    log.info(f"#{top_n}: {formatted_top.rjust(max_width)} ({block_id})")
                 log.info("")
 
             # Write stats to CSV file
@@ -153,11 +161,22 @@ class AnalyseUpdatesCommand(QleverCommand):
                 fields = list(all_stats.keys())
                 with open(csv_filename, "w", newline="") as csvfile:
                     writer = csv.writer(csvfile)
-                    # Header row: first column is stat name, then field names
-                    writer.writerow(["stat"] + fields)
+                    # Header row: first column is stat name, then field names with block columns
+                    headers = ["stat"]
+                    for field in fields:
+                        headers.append(field)
+                        headers.append(f"{field}_block")
+                    writer.writerow(headers)
                     # Data rows: one per stat
-                    for stat in row_labels:
-                        row = [stat] + [all_stats[f].get(stat, "") for f in fields]
+                    for stat_name in row_labels:
+                        row = [stat_name]
+                        for field in fields:
+                            row.append(all_stats[field].get(stat_name, ""))
+                            # Add block index if this is a top_n stat
+                            if stat_name in ["#1", "#5", "#25", "#100"]:
+                                row.append(all_stats[field].get(f"{stat_name}_block", ""))
+                            else:
+                                row.append("")  # Empty for non-top_n stats
                         writer.writerow(row)
                 log.info(f"Statistics written to {csv_filename}")
 
