@@ -87,13 +87,13 @@ class AnalyseUpdatesCommand(QleverCommand):
                          [f"#{i}" for i in range(1, 26)] + ["#50", "#75", "#100"]
             all_stats: dict[str, dict[str, float | str]] = {}
 
-            for field, data in parsed.items():
+            for permutation, data in parsed.items():
                 # Extract block indices and values as parallel arrays
                 block_indices = np.array(list(data.keys()), dtype=str)
                 values = np.array([int(num_changes) for num_changes in data.values()], dtype=int)
 
                 if values.size == 0:
-                    log.info(f"'{field}' field is present but empty; nothing to analyze.")
+                    log.info(f"'{permutation}' field is present but empty; nothing to analyze.")
                     continue
 
                 # Sort both arrays together to maintain association
@@ -123,7 +123,7 @@ class AnalyseUpdatesCommand(QleverCommand):
                     idx = min(top_n, len(values))
                     field_stats[f"#{top_n}"] = float(values[-idx])
                     field_stats[f"#{top_n}_block"] = str(block_indices[-idx])
-                all_stats[field] = field_stats
+                all_stats[permutation] = field_stats
 
                 formatted_count = _fmt_int(n)
                 formatted_sum = _fmt_int(sum_val)
@@ -139,7 +139,7 @@ class AnalyseUpdatesCommand(QleverCommand):
                     *(len(v) for v in formatted_pcts.values()),
                 )
 
-                log.info(f"Updated block sizes retrieved ({field} stats):")
+                log.info(f"Updated block sizes retrieved ({permutation} stats):")
                 log.info(f"count : {formatted_count.rjust(max_width)}")
                 log.info(f"sum   : {formatted_sum.rjust(max_width)}")
                 log.info(f"avg   : {formatted_avg.rjust(max_width)}")
@@ -163,18 +163,18 @@ class AnalyseUpdatesCommand(QleverCommand):
                     writer = csv.writer(csvfile)
                     # Header row: first column is stat name, then field names with block columns
                     headers = ["stat"]
-                    for field in fields:
-                        headers.append(field)
-                        headers.append(f"{field}_block")
+                    for permutation in fields:
+                        headers.append(permutation)
+                        headers.append(f"{permutation}_block")
                     writer.writerow(headers)
                     # Data rows: one per stat
                     for stat_name in row_labels:
                         row = [stat_name]
-                        for field in fields:
-                            row.append(all_stats[field].get(stat_name, ""))
+                        for permutation in fields:
+                            row.append(all_stats[permutation].get(stat_name, ""))
                             # Add block index if this is a top_n stat
                             if stat_name.startswith("#"):
-                                row.append(all_stats[field].get(f"{stat_name}_block", ""))
+                                row.append(all_stats[permutation].get(f"{stat_name}_block", ""))
                             else:
                                 row.append("")  # Empty for non-top_n stats
                         writer.writerow(row)
