@@ -258,6 +258,11 @@ class UpdateWikidataCommand(QleverCommand):
             "none (delete all), all (keep all), last (keep only the most recent), "
             "last-three (keep the three most recent) (default: last)",
         )
+        subparser.add_argument(
+            "--collect-only",
+            action="store_true",
+            help="Only collect the updates but don't execute them."
+        )
 
     # Handle Ctrl+C gracefully by finishing the current batch and then exiting.
     def handle_ctrl_c(self, signal_received, frame):
@@ -980,6 +985,9 @@ class UpdateWikidataCommand(QleverCommand):
             curl_cmd += f" --data-binary @{update_arg_file_name}"
             if args.verbose == "yes":
                 log.info(colored(curl_cmd, "blue"))
+
+            if args.collect_only:
+                continue
 
             # Run it (using `curl` for batch size up to 1000, otherwise
             # `requests`) with retry logic.
