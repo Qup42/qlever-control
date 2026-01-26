@@ -1,11 +1,47 @@
 from __future__ import annotations
 
+import dataclasses
 import struct
+from enum import Enum
 from pathlib import Path
 
 from qlever.command import QleverCommand
 from qlever.log import log
 
+class Datatype(Enum):
+    Undefined = 0
+    Bool = 1
+    Int = 2
+    Double = 3
+    VocabIndex = 4
+    LocalVocabIndex = 5
+    TextRecordIndex = 6
+    Date = 7
+    GeoPoint = 8
+    WordVocabIndex = 9
+    BlankNodeIndex = 10
+    EncodedVal = 11
+
+NUM_DATATYPE_BITS = 4
+NUM_DATA_BITS = 64 - NUM_DATATYPE_BITS
+
+@dataclasses.dataclass
+class ValueId:
+    bits: int
+
+    def __post_init__(self):
+        assert 0 <= self.bits < (1 << 64)
+
+    def __repr__(self):
+        return f"ValueId(bits=0x{self.bits:016x}, datatype={self.getDatatype().name}, data=0x{self.getData():x})"
+
+    def getDatatype(self) -> Datatype:
+        datatype_value = self.bits >> NUM_DATA_BITS
+        return Datatype(datatype_value)
+
+    def getData(self) -> int:
+        data_mask = (1 << NUM_DATA_BITS) - 1
+        return self.bits & data_mask
 
 class DebugIndexFileCommand(QleverCommand):
     """
@@ -69,6 +105,8 @@ class DebugIndexFileCommand(QleverCommand):
             return struct.unpack("<L", f.read(4))[0]
         def read_off_t():
             return struct.unpack("<q", f.read(8))[0]
+        def read_char():
+            return struct.unpack("<c", f.read(1))[0].decode("utf-8")
         def read_string():
             length = read_uint64()
             return f.read(length).decode("utf-8")
@@ -112,7 +150,7 @@ class DebugIndexFileCommand(QleverCommand):
             log.debug(f"Reading vector of length {length}")
             return [read_element() for _ in range(length)]
         def read_id():
-            return read_uint64()
+            return ValueId(read_uint64())
         def read_PermutedTriple():
             return (read_id(), read_id(), read_id(), read_id())
         def read_float():
@@ -129,6 +167,25 @@ class DebugIndexFileCommand(QleverCommand):
                 f"multiplicityCol2={multiplicityCol2}, "
                 f"offsetInBlock=0x{offsetInBlock:016x}"
             )
+
+        def read_MmapVector(read_element):
+            f.seek(-32, 2)  # Seek to 32 bytes before end
+            log.info(f"Metadata begin at {f.tell():x}")
+            size = read_uint64()
+            log.info(f"Size: {size}")
+            capacity = read_uint64()
+            log.info(f"Capacity: {capacity}")
+            bytesize = read_uint64()
+            log.info(f"Bytesize: 0x{bytesize:016x}")
+            magic_number = read_uint32()
+            log.info(f"Magic number: {magic_number:08x}")
+            assert magic_number == 7601577
+            version = read_uint32()
+            log.info(f"Version: {version}")
+            assert version == 0
+
+            f.seek(0, 0)
+            return [read_element() for _ in range(size)]
 
         # Read last 8 bytes
         try:
@@ -178,25 +235,33 @@ class DebugIndexFileCommand(QleverCommand):
             return False
 
         with open(relations_file, "rb") as f:
-            f.seek(-32, 2)  # Seek to 40 bytes before end
-            log.info(f"Metadata begin at {f.tell():x}")
-            size = read_uint64()
-            log.info(f"Size: {size}")
-            capacity = read_uint64()
-            log.info(f"Capacity: {capacity}")
-            bytesize = read_uint64()
-            log.info(f"Bytesize: 0x{bytesize:016x}")
-            magic_number = read_uint32()
-            log.info(f"Magic number: {magic_number:08x}")
-            assert magic_number == 7601577
-            version = read_uint32()
-            log.info(f"Version: {version}")
-            assert version == 0
+            read_MmapVector(read_CompressedRelationMetadata)
 
-            f.seek(0, 0)
-            for _ in range(size):
-                read_CompressedRelationMetadata()
+        def read_from_vocab(i):
+            begin = offsets[i]
+            size = offsets[i + 1] - begin
+            external_vocab.seek(begin, 0)
+            return external_vocab.read(size).decode()
+        def read_from_internal_vocab(i):
+            begin = offsets[i]
+            size = offsets[i + 1] - begin
+            return "".join(data[begin:begin+size])
+        with open(f"{args.name}.vocabulary.external.offsets", "rb") as f:
+            offsets = read_MmapVector(read_uint64)
+            log.debug(f"Read {len(offsets)} offsets")
 
+        with open(f"{args.name}.vocabulary.external", "rb") as external_vocab:
+            for _ in range(10):
+                log.debug(f"Word#{_}: {read_from_vocab(_)}")
 
+        with open(f"{args.name}.vocabulary.internal.ids", "rb") as f:
+            ids = read_vector(read_uint64)
+            log.debug(f"Read {len(ids)} ids")
+
+        with open(f"{args.name}.vocabulary.internal", "rb") as f:
+            data = read_vector(read_char)
+            offsets = read_vector(read_uint64)
+            for _ in range(10):
+                log.debug(f"Word#{_}: {read_from_internal_vocab(_)}")
 
         return True
