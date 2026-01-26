@@ -47,10 +47,13 @@ class AnalyseUpdatesCommand(QleverCommand):
         """
         # Build curl command to call the server API.
         analyse_cmd = "curl -s"
+        endpoint = ""
         if getattr(args, "sparql_endpoint", None):
-            analyse_cmd += f" {args.sparql_endpoint}"
+            endpoint = args.sparql_endpoint
+            analyse_cmd += f" {endpoint}"
         else:
-            analyse_cmd += f" {args.host_name}:{args.port}"
+            endpoint = f"{args.host_name}:{args.port}"
+            analyse_cmd += f" {endpoint}"
 
         analyse_cmd += (
             f' --data-urlencode "cmd=get-updated-block-sizes"'
@@ -79,6 +82,107 @@ class AnalyseUpdatesCommand(QleverCommand):
             # Helper to format integers with dot thousand separators
             def _fmt_int(x) -> str:
                 return format(int(round(x)), ",").replace(",", ".")
+
+            def _fetch_block_info(endpoint: str, access_token: str, permutation: str, block_index: str):
+                """Fetch block inspection data from the server."""
+                inspect_cmd = (
+                    f"curl -s {endpoint}"
+                    f' --data-urlencode "cmd=inspect-block"'
+                    f' --data-urlencode "permutation={permutation}"'
+                    f' --data-urlencode "blockIndex={block_index}"'
+                    f' --data-urlencode "access-token={access_token}"'
+                    f' -w " %{{http_code}}"'
+                )
+
+                try:
+                    result = run_command(inspect_cmd, return_output=True)
+                    match = re.match(r"^(.*) (\d+)$", result, re.DOTALL)
+                    if not match:
+                        return None
+
+                    body = match.group(1).strip()
+                    status_code = match.group(2)
+
+                    if status_code != "200":
+                        return None
+
+                    return json.loads(body)
+                except Exception:
+                    return None
+
+            def _format_block_markdown(block_info: dict, rank: str, fmt_func) -> str:
+                """Format block inspection data as markdown."""
+                if not block_info:
+                    return f"### Block #{rank} - Inspection Failed\n\n*Data unavailable*\n\n"
+
+                block_idx = block_info.get("blockIndex", "N/A")
+                first = block_info.get("firstTriple", "N/A")
+                last = block_info.get("lastTriple", "N/A")
+                original = block_info.get("originalTriples", 0)
+
+                updates = block_info.get("updates", {})
+                deletes = updates.get("deletes", 0)
+                inserts = updates.get("inserts", 0)
+                total = updates.get("total", 0)
+
+                ratio = f"{inserts / deletes:.2f}" if deletes > 0 else "N/A"
+
+                return f"""### Block #{rank} (Index: {block_idx})
+
+**First Triple:** `{first}`
+
+**Last Triple:** `{last}`
+
+**Original Triples:** {fmt_func(original)}
+
+**Updates:**
+
+| Deletes | Inserts | Total | Ratio (I/D) |
+|--------:|--------:|------:|------------:|
+| {fmt_func(deletes)} | {fmt_func(inserts)} | {fmt_func(total)} | {ratio} |
+
+"""
+
+            def _generate_markdown_files(all_stats: dict, endpoint: str, access_token: str, fmt_func):
+                """Generate markdown report for each permutation."""
+                for permutation, stats in all_stats.items():
+                    try:
+                        filename = f"update_analysis.{permutation}.md"
+
+                        # Build metadata section
+                        content = f"# Update Analysis: {permutation}\n\n"
+                        content += "## Metadata\n\n"
+                        content += "| Metric | Value |\n"
+                        content += "|--------|------:|\n"
+                        content += f"| Count | {fmt_func(stats['count'])} |\n"
+                        content += f"| Sum | {fmt_func(stats['sum'])} |\n"
+                        content += f"| Average | {fmt_func(stats['avg'])} |\n"
+                        content += f"| Median | {fmt_func(stats['median'])} |\n"
+
+                        # Add percentiles
+                        for p in [10, 25, 75, 90, 95, 99, 99.9, 99.99]:
+                            content += f"| P{p} | {fmt_func(stats[f'p{p}'])} |\n"
+
+                        content += "\n## Selected Blocks\n\n"
+
+                        # Fetch and format block details
+                        block_ranks = list(range(1, 26)) + [50, 75, 100]
+                        for rank in block_ranks:
+                            block_key = f"#{rank}_block"
+                            if block_key in stats:
+                                block_index = stats[block_key]
+                                log.debug(f"Inspecting {permutation} block #{rank} (index {block_index})...")
+                                block_info = _fetch_block_info(endpoint, access_token, permutation, block_index)
+                                content += _format_block_markdown(block_info, str(rank), fmt_func)
+
+                        # Write file
+                        with open(filename, "w") as f:
+                            f.write(content)
+
+                        log.info(f"Markdown report written to {filename}")
+
+                    except Exception as e:
+                        log.error(f"Failed to generate markdown for {permutation}: {e}")
 
             # Collect stats for CSV export
             percentiles = [10, 25, 50, 75, 90, 95, 99, 99.9, 99.99]
@@ -179,6 +283,10 @@ class AnalyseUpdatesCommand(QleverCommand):
                                 row.append("")  # Empty for non-top_n stats
                         writer.writerow(row)
                 log.info(f"Statistics written to {csv_filename}")
+
+                # Generate markdown files for each permutation
+                log.info("Generating markdown reports...")
+                _generate_markdown_files(all_stats, endpoint, args.access_token, _fmt_int)
 
             return True
         except Exception as e:
