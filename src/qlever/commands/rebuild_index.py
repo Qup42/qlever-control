@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -51,10 +52,32 @@ class RebuildIndexCommand(QleverCommand):
             "where the timestamp is the time of the earliest index file)",
         )
         subparser.add_argument(
+            "--new-index-dir-basename",
+            type=str,
+            default="rebuild.",
+            help="Basename prefix for the new index directory when "
+            "`--new-index-dir` is not specified (default: `rebuild.`)",
+        )
+        subparser.add_argument(
+            "--old-index-dir-basename",
+            type=str,
+            default="previous.",
+            help="Basename prefix for the old index directory when "
+            "`--old-index-dir` is not specified (default: `previous.`)",
+        )
+        subparser.add_argument(
+            "--keep-old-index-dirs",
+            choices=["all", "none", "oldest", "newest"],
+            default="oldest",
+            help="Which old index directories to keep: all (keep all), "
+            "none (delete all), oldest (keep only oldest), "
+            "newest (keep only newest) (default: oldest)",
+        )
+        subparser.add_argument(
             "--index-name",
             type=str,
-            help="Base name of the new index (default: use the same as the "
-            "current index)",
+            help="Base name of the files of the new index (default: use "
+            "the same basename as for the current index)",
         )
         subparser.add_argument(
             "--restart-when-finished",
@@ -101,9 +124,20 @@ class RebuildIndexCommand(QleverCommand):
         if args.index_name is None:
             args.index_name = args.name
         if args.new_index_dir is None:
-            args.new_index_dir = f"rebuild.{new_index_date}.tmp"
+            args.new_index_dir = (
+                f"{args.new_index_dir_basename}{new_index_date}.tmp"
+            )
             if args.old_index_dir is None:
-                args.old_index_dir = f"previous.{old_index_date}"
+                # Check if this is the first rebuild (no previous.* directories exist)
+                existing_previous_dirs = list(
+                    Path(".").glob(f"{args.old_index_dir_basename}*")
+                )
+                is_first_rebuild = len(existing_previous_dirs) == 0
+
+                args.old_index_dir = (
+                    f"{args.old_index_dir_basename}{old_index_date}"
+                    + (".ORIGINAL" if is_first_rebuild else "")
+                )
         if args.new_index_dir.endswith("/"):
             args.new_index_dir = args.new_index_dir[:-1]
 
@@ -163,7 +197,7 @@ class RebuildIndexCommand(QleverCommand):
             f"mv {shlex.quote(new_index_dir_name)}/* . && "
             f"rmdir {shlex.quote(new_index_dir_name)}"
         )
-        restart_server_cmd = "qlever start --kill-existing-with-same-port"
+        restart_server_cmd = "qlever stop && qlever start"
         if not move_old_index_when_done:
             restart_server_cmd = (
                 f"cd {args.new_index_dir} && ${restart_server_cmd}"
@@ -194,7 +228,7 @@ class RebuildIndexCommand(QleverCommand):
         # being processed at the same time. It would be better if QLever
         # logged the rebuild-index output to a separate log file.
         tail_cmd = (
-            f"touch -c {new_index_dir_name}/{log_file_name} && "
+            f"touch {new_index_dir_name}/{log_file_name} && "
             f"exec tail -n 0 -f {new_index_dir_name}/{log_file_name}"
         )
         tail_proc = subprocess.Popen(tail_cmd, shell=True)
@@ -249,5 +283,55 @@ class RebuildIndexCommand(QleverCommand):
             except Exception as e:
                 log.error(f"Restarting the server failed: {e}")
                 return False
+
+        # Clean up old index directories according to `--keep-old-index-dirs`.
+        # Find all subdirectories starting with `old_index_dir_basename`,
+        # ordered from oldest to newest (by creation time), and keep or delete
+        # them according to the specified policy.
+        if move_old_index_when_done:
+            old_index_dirs = sorted(
+                [
+                    dir
+                    for dir in Path(".").iterdir()
+                    if dir.is_dir()
+                    and dir.name.startswith(args.old_index_dir_basename)
+                ],
+                key=lambda dir: dir.stat().st_ctime,
+            )
+            if old_index_dirs:
+                log.info("")
+                log.info(
+                    colored(
+                        f"Iterate over old index directories (oldest to "
+                        f"newest), and check which ones to keep or delete "
+                        f"(keep_old_index_dirs = {args.keep_old_index_dirs}):",
+                        color="blue",
+                    )
+                )
+                for i, dir in enumerate(old_index_dirs):
+                    is_oldest = i == 0
+                    is_newest = i == len(old_index_dirs) - 1
+                    if args.keep_old_index_dirs == "all":
+                        action = "KEEP"
+                    elif args.keep_old_index_dirs == "none":
+                        action = "DELETE"
+                    elif args.keep_old_index_dirs == "oldest":
+                        action = "KEEP" if is_oldest else "DELETE"
+                    elif args.keep_old_index_dirs == "newest":
+                        action = "KEEP" if is_newest else "DELETE"
+
+                    log.info(f"  {dir.name:<50} {action}")
+
+                    # Actually perform the deletion
+                    if action == "DELETE":
+                        try:
+                            shutil.rmtree(dir)
+                            log.info(f"    → Deleted {dir.name}")
+                        except Exception as e:
+                            log.error(
+                                f"    → Failed to delete {dir.name}: {e}"
+                            )
+
+                log.info("")
 
         return True

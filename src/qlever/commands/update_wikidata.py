@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import glob
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ import signal
 import time
 from datetime import datetime, timezone
 from enum import Enum, auto
+from pathlib import Path
 
 import rdflib.term
 import requests_sse
@@ -201,19 +203,12 @@ class UpdateWikidataCommand(QleverCommand):
             help="The partition to consume from the SSE stream (default: 0)",
         )
         subparser.add_argument(
-            "--min-or-max-date",
-            choices=["min", "max"],
-            default="max",
-            help="Use the minimum or maximum date of the batch for the "
-            "`updatesCompleteUntil` property (default: maximum)",
-        )
-        subparser.add_argument(
             "--wait-between-batches",
             type=int,
-            default=300,
+            default=5,
             help="Wait this many seconds between batches that were "
             "finished due to a message that is within `lag_seconds` of "
-            "the current time (default: 300s)",
+            "the current time (default: 5 seconds)",
         )
         subparser.add_argument(
             "--num-messages",
@@ -254,6 +249,14 @@ class UpdateWikidataCommand(QleverCommand):
             default=10,
             help="Number of retries for offset verification queries when they fail "
             "(default: 10)",
+        )
+        subparser.add_argument(
+            "--keep-update-requests",
+            choices=["none", "all", "last", "last-three"],
+            default="last",
+            help="Which update request files (update.*.{sparql,meta,result}) to keep: "
+            "none (delete all), all (keep all), last (keep only the most recent), "
+            "last-three (keep the three most recent) (default: last)",
         )
 
     # Handle Ctrl+C gracefully by finishing the current batch and then exiting.
@@ -337,8 +340,7 @@ class UpdateWikidataCommand(QleverCommand):
                 if result and result != '""':
                     args.offset = int(result.strip('"'))
                     log.info(
-                        f"Resuming from offset from endpoint: "
-                        f"{args.offset}"
+                        f"Resuming from offset from endpoint: {args.offset}"
                     )
             except Exception as e:
                 log.debug(
@@ -649,9 +651,9 @@ class UpdateWikidataCommand(QleverCommand):
                             rdf_linked_shared_data = event_data.get(
                                 "rdf_linked_shared_data"
                             )
-                            rdf_unlinked_shared_data = event_data.get(
-                                "rdf_unlinked_shared_data"
-                            )
+                            # rdf_unlinked_shared_data = event_data.get(
+                            #     "rdf_unlinked_shared_data"
+                            # )
 
                             # Check batch completion conditions BEFORE processing the
                             # data of this message. If any of the conditions is met,
@@ -753,10 +755,14 @@ class UpdateWikidataCommand(QleverCommand):
                                 )
 
                             # Process the to-be-deleted triples.
-                            for rdf_to_be_deleted in (
-                                rdf_deleted_data,
-                                rdf_unlinked_shared_data,
-                            ):
+                            #
+                            # NOTE: The triples from `rdf_unlinked_shared_data`
+                            # must not be deleted, because they are only
+                            # unlinked from the current entity, but may still
+                            # be linked from other entities. If they are not
+                            # linked from any other entity, they will be
+                            # orphaned, but we don't mind that.
+                            for rdf_to_be_deleted in (rdf_deleted_data,):
                                 if rdf_to_be_deleted is not None:
                                     try:
                                         rdf_to_be_deleted_data = (
@@ -899,28 +905,13 @@ class UpdateWikidataCommand(QleverCommand):
                     f"min delta to NOW: {min_delta_to_now_s}s]"
                 )
 
-                # Add the min and max date of the batch to `insert_triples`.
-                #
-                # NOTE: The min date means that we have *all* updates until that
-                # date. The max date is the date of the latest update we have seen.
-                # However, there may still be earlier updates that we have not seen
-                # yet. Wikidata uses `schema:dateModified` for the latter semantics,
-                # so we use it here as well. For the other semantics, we invent
-                # a new property `wikibase:updatesCompleteUntil`.
-                insert_triples.add(
-                    f"<http://wikiba.se/ontology#Dump> "
-                    f"<http://schema.org/dateModified> "
-                    f'"{date_list[-1]}"^^<http://www.w3.org/2001/XMLSchema#dateTime>'
-                )
-                updates_complete_until = (
-                    date_list[-1]
-                    if args.min_or_max_date == "max"
-                    else date_list[0]
-                )
+                # Add a triples `wikibase:Dump wikibase:updatesCompleteUntil
+                # DATE` and `wikibase:Dump wikibase:updateStreamNextOffset
+                # OFFSET`.
                 insert_triples.add(
                     f"<http://wikiba.se/ontology#Dump> "
                     f"<http://wikiba.se/ontology#updatesCompleteUntil> "
-                    f'"{updates_complete_until}"'
+                    f'"{date_list[-1]}"'
                     f"^^<http://www.w3.org/2001/XMLSchema#dateTime>"
                 )
                 insert_triples.add(
@@ -1002,6 +993,49 @@ class UpdateWikidataCommand(QleverCommand):
                 result_file_name = f"update.{first_offset_in_batch}.{current_batch_size}.result"
                 with open(result_file_name, "w") as f:
                     f.write(result)
+
+                # Clean up old update request files according to --keep-update-requests
+                if args.keep_update_requests != "all":
+                    # Find all update.*.{sparql,meta,result} files
+                    update_files = {}
+                    for ext in ["sparql", "meta", "result"]:
+                        for file_path in glob.glob(f"update.*.*.{ext}"):
+                            # Extract offset from filename (update.OFFSET.SIZE.ext)
+                            parts = Path(file_path).stem.split(".")
+                            if len(parts) >= 3:
+                                offset = parts[1]
+                                if offset not in update_files:
+                                    update_files[offset] = []
+                                update_files[offset].append(file_path)
+
+                    # Sort by offset (newest last)
+                    sorted_offsets = sorted(
+                        update_files.keys(), key=lambda x: int(x)
+                    )
+
+                    # Determine which to keep
+                    if args.keep_update_requests == "none":
+                        files_to_keep = []
+                    elif args.keep_update_requests == "last":
+                        files_to_keep = (
+                            update_files[sorted_offsets[-1]]
+                            if sorted_offsets
+                            else []
+                        )
+                    elif args.keep_update_requests == "last-three":
+                        files_to_keep = []
+                        for offset in sorted_offsets[-3:]:
+                            files_to_keep.extend(update_files[offset])
+
+                    # Delete files not in the keep list
+                    for offset, files in update_files.items():
+                        for file_path in files:
+                            if file_path not in files_to_keep:
+                                try:
+                                    os.remove(file_path)
+                                except Exception:
+                                    pass  # Ignore errors during cleanup
+
             except Exception as e:
                 log.error(
                     f"Failed to execute UPDATE request after "
