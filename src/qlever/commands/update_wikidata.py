@@ -281,7 +281,7 @@ class UpdateWikidataCommand(QleverCommand):
                 log.warn(f"Found {len(options)} candidates for cached SPARQL update. Using {options[0].name}.")
             return int(re.search(r"update\.\d+\.(\d+)\.sparql", options[0].name).group(1))
 
-    def determine_next_cached_update(self, first_offset_in_batch: int, batch_size: int) -> tuple[str, int] | None:
+    def determine_next_cached_update(self, first_offset_in_batch: int, batch_size: int) -> tuple[str, int, str] | None:
         batch_size = self.determine_batch_size_for_cached_update(first_offset_in_batch, batch_size)
         if batch_size is None:
             return None
@@ -294,10 +294,12 @@ class UpdateWikidataCommand(QleverCommand):
 
         # Try to read metadata file for date range
         cached_date_range = None
+        cached_data_until = None
         if os.path.exists(cached_meta_file_name):
             try:
                 with open(cached_meta_file_name, "r") as f:
                     cached_date_range = f.read().strip()
+                    cached_data_until = cached_date_range.split(" - ")[1].strip()
             except Exception:
                 pass
 
@@ -306,7 +308,7 @@ class UpdateWikidataCommand(QleverCommand):
             log_msg += f" [date range: {cached_date_range}]"
         log.debug(colored(log_msg, "cyan"))
 
-        return cached_file_name, batch_size
+        return cached_file_name, batch_size, cached_data_until
 
     def execute(self, args) -> bool:
         # cURL command to get the date until which the updates of the
@@ -622,6 +624,7 @@ class UpdateWikidataCommand(QleverCommand):
             # Check if we can use a cached SPARQL query file
             use_cached_file = False
             cached_file_name = None
+            cached_update_until = None
             if (
                 args.use_cached_sparql_queries
                 and first_offset_in_batch is not None
@@ -629,7 +632,7 @@ class UpdateWikidataCommand(QleverCommand):
                 cached_update = self.determine_next_cached_update(first_offset_in_batch,
                                                                      args.batch_size)
                 if cached_update is not None:
-                    cached_file_name, current_batch_size = cached_update
+                    cached_file_name, current_batch_size, cached_update_until = cached_update
                     use_cached_file = True
 
             # Process one event at a time (unless using cached file).
@@ -904,6 +907,20 @@ class UpdateWikidataCommand(QleverCommand):
                         "offset": first_offset_in_batch + current_batch_size,
                     }
                 ]
+                if cached_update_until:
+                    # Condition 4: Reached `--until` date and at least one
+                    # message was processed.
+                    if (
+                        args.until
+                        and cached_update_until >= args.until
+                        and current_batch_size > 0
+                    ):
+                        log.warn(
+                            f"Reached --until date {args.until} "
+                            f"(next batch goes until: {cached_update_until}), that's it folks"
+                        )
+                        self.finished = True
+                        break
 
             # Process the current batch of messages (or skip if using cached).
             batch_count += 1
