@@ -170,7 +170,7 @@ class DebugIndexFileCommand(QleverCommand):
 
         def read_MmapVector(read_element):
             f.seek(-32, 2)  # Seek to 32 bytes before end
-            log.info(f"Metadata begin at {f.tell():x}")
+            log.info(f"Metadata begin at 0x{f.tell():x}")
             size = read_uint64()
             log.info(f"Size: {size}")
             capacity = read_uint64()
@@ -237,31 +237,31 @@ class DebugIndexFileCommand(QleverCommand):
         with open(relations_file, "rb") as f:
             read_MmapVector(read_CompressedRelationMetadata)
 
-        def read_from_vocab(i):
-            begin = offsets[i]
-            size = offsets[i + 1] - begin
-            external_vocab.seek(begin, 0)
-            return external_vocab.read(size).decode()
-        def read_from_internal_vocab(i):
-            begin = offsets[i]
-            size = offsets[i + 1] - begin
-            return "".join(data[begin:begin+size])
-        with open(f"{args.name}.vocabulary.external.offsets", "rb") as f:
-            offsets = read_MmapVector(read_uint64)
-            log.debug(f"Read {len(offsets)} offsets")
+        #def read_from_vocab(i):
+        #    begin = offsets[i]
+        #    size = offsets[i + 1] - begin
+        #    external_vocab.seek(begin, 0)
+        #    return external_vocab.read(size).decode()
+        #def read_from_internal_vocab(i):
+        #    begin = offsets[i]
+        #    size = offsets[i + 1] - begin
+        #    return "".join(data[begin:begin+size])
+        #with open(f"{args.name}.vocabulary.external.offsets", "rb") as f:
+        #    offsets = read_MmapVector(read_uint64)
+        #    log.debug(f"Read {len(offsets)} offsets")
 
-        with open(f"{args.name}.vocabulary.external", "rb") as external_vocab:
-            for _ in range(10):
-                log.debug(f"Word#{_}: {read_from_vocab(_)}")
+        #with open(f"{args.name}.vocabulary.external", "rb") as external_vocab:
+        #    for _ in range(10):
+        #        log.debug(f"Word#{_}: {read_from_vocab(_)}")
 
-        with open(f"{args.name}.vocabulary.internal.ids", "rb") as f:
-            ids = read_vector(read_uint64)
-            log.debug(f"Read {len(ids)} ids")
+        #with open(f"{args.name}.vocabulary.internal.ids", "rb") as f:
+        #    ids = read_vector(read_uint64)
+        #    log.debug(f"Read {len(ids)} ids")
 
-        with open(f"{args.name}.vocabulary.internal", "rb") as f:
-            data = read_vector(read_char)
-            offsets = read_vector(read_uint64)
-            for _ in range(10):
-                log.debug(f"Word#{_}: {read_from_internal_vocab(_)}")
+        #with open(f"{args.name}.vocabulary.internal", "rb") as f:
+        #    data = read_vector(read_char)
+        #    offsets = read_vector(read_uint64)
+        #    for _ in range(10):
+        #        log.debug(f"Word#{_}: {read_from_internal_vocab(_)}")
 
         return True
