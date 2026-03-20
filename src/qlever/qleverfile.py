@@ -37,11 +37,14 @@ class Qleverfile:
         "lazy-index-scan-num-threads",
         "lazy-index-scan-queue-size",
         "lazy-result-max-cache-size",
+        "permutation-writer-num-threads",
         "query-planning-budget",
         "request-body-limit",
+        "service-allowed-iri-prefixes",
         "service-max-redirects",
         "service-max-value-rows",
         "sort-estimate-cancellation-factor",
+        "sort-in-memory-threshold",
         "sparql-results-json-with-time",
         "spatial-join-prefilter-max-size",
         "spatial-join-max-num-threads",
@@ -140,6 +143,15 @@ class Qleverfile:
             default="{}",
             help="The `.settings.json` file for the index",
         )
+        index_args["materialized_views"] = arg(
+            "--materialized-views",
+            type=str,
+            default=None,
+            help="JSON to specify materialized views to be created at the "
+            'end of the index build, of the form `{ "view_name": '
+            '"SPARQL query", ... }`; default: do not create any '
+            "materialized views",
+        )
         index_args["ulimit"] = arg(
             "--ulimit",
             type=int,
@@ -165,7 +177,7 @@ class Qleverfile:
         index_args["index_binary"] = arg(
             "--index-binary",
             type=str,
-            default="IndexBuilderMain",
+            default="qlever-index",
             help="The binary for building the index (this requires "
             "that you have compiled QLever on your machine)",
         )
@@ -242,7 +254,7 @@ class Qleverfile:
         server_args["server_binary"] = arg(
             "--server-binary",
             type=str,
-            default="ServerMain",
+            default="qlever-server",
             help="The binary for starting the server (this requires "
             "that you have compiled QLever on your machine)",
         )

@@ -20,12 +20,12 @@ class StatusCommand(QleverCommand):
     def should_have_qleverfile(self) -> bool:
         return False
 
-    def relevant_qleverfile_arguments(self) -> dict[str: list[str]]:
+    def relevant_qleverfile_arguments(self) -> dict[str, list[str]]:
         return {}
 
     def additional_arguments(self, subparser) -> None:
         subparser.add_argument("--cmdline-regex",
-                               default="^(ServerMain|IndexBuilderMain)",
+                               default="^(qlever-server|qlever-index)",
                                help="Show only processes where the command "
                                     "line matches this regex")
 

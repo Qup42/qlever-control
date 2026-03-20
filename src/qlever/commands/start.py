@@ -47,7 +47,7 @@ def construct_command(args) -> str:
 # Kill existing server on the same port. Trust that StopCommand() works?
 # Maybe return StopCommand().execute(args) and handle it with a try except?
 def kill_existing_server(args) -> bool:
-    args.cmdline_regex = f"^ServerMain.* -p {args.port}"
+    args.cmdline_regex = f"^qlever-server.* -p {args.port}"
     args.no_containers = True
     if not StopCommand().execute(args):
         log.error("Stopping the existing server failed")
@@ -185,7 +185,7 @@ class StartCommand(QleverCommand):
         # TODO: This is currently disabled because I never used it once over
         # the past weeks and it is not clear to me what the use case is.
         if False:  # or args.kill_existing_with_same_name:
-            args.cmdline_regex = f"^ServerMain.* -i {args.name}"
+            args.cmdline_regex = f"^qlever-server.* -i {args.name}"
             args.no_containers = True
             StopCommand().execute(args)
             log.info("")
@@ -218,10 +218,8 @@ class StartCommand(QleverCommand):
                 SettingsCommand().execute(args)
             return True
 
-        # When running natively, check if the binary exists and works.
-        if args.system == "native":
-            if not binary_exists(args.server_binary, "server-binary"):
-                return False
+        if not binary_exists(args.server_binary, "server-binary", args):
+            return False
 
         # Check if a QLever server is already running on this port.
         if is_qlever_server_alive(args.endpoint_url):
@@ -234,7 +232,7 @@ class StartCommand(QleverCommand):
             )
 
             # Show output of status command.
-            args.cmdline_regex = f"^ServerMain.* -p *{args.port}"
+            args.cmdline_regex = f"^qlever-server.* -p *{args.port}"
             log.info("")
             StatusCommand().execute(args)
             return False
